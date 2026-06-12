@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+*.log
+
+# tests
+test-results/
+playwright-report/
+playwright/.cache/
+
+# prisma
+prisma/*.db
+
+# os
+.DS_Store
+Thumbs.db
+
+# build cache / dev artifacts
+*.tsbuildinfo
+
+# 데모 검증용 스크린샷(재생성 가능)
+shots/

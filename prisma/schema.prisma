@@ -1,0 +1,1002 @@
+// 필라헬퍼 v2 데이터모델 — docs/spec/00-canon.md §2/§3 + 11-erd.md 와 정합(SSOT).
+// snake_case 컬럼 + tenant_id/studio_id 격리 + 공통 컬럼(created_at/updated_at/deleted_at/created_by).
+// 금액은 BigInt(원), 날짜는 @db.Date, 시각은 DateTime(UTC). src/domain/entities.ts 와 1:1.
+// 관계는 *_id 스칼라 컬럼으로 표현(인덱스 부여). FK 제약/관계 elaboration 은 마이그레이션 단계에서.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── enums (canon §3) ─────────────────────────────────────────
+enum Role {
+  saas_admin
+  owner
+  manager
+  info_staff
+  instructor
+  accountant
+  member
+}
+
+enum Gender {
+  male
+  female
+  other
+}
+
+enum MemberStatus {
+  new_inquiry
+  consulting
+  trial_booked
+  trial_done
+  enrolled
+  dormant
+  expired
+  re_enrolled
+}
+
+enum LeadStatus {
+  new_inquiry
+  contacted
+  trial_booked
+  trial_done
+  enrolled
+  on_hold
+  lost
+}
+
+enum ClassType {
+  personal
+  group
+  trial
+}
+
+enum SessionStatus {
+  scheduled
+  open
+  closed
+  canceled
+  completed
+}
+
+enum ReservationStatus {
+  booked
+  waitlisted
+  attended
+  absent
+  no_show
+  canceled
+}
+
+enum AttendanceStatus {
+  attended
+  late
+  absent
+  no_show
+  excused
+}
+
+enum WaitlistStatus {
+  waiting
+  promoted
+  canceled
+  expired
+}
+
+enum PassKind {
+  personal
+  group
+  trial
+  package
+}
+
+enum PassStatus {
+  active
+  paused
+  expired
+  refunded
+  used_up
+}
+
+enum PassTxnReason {
+  deduct_booking
+  deduct_attend
+  restore_cancel
+  restore_close
+  manual_deduct
+  manual_restore
+}
+
+enum PaymentStatus {
+  paid
+  awaiting_deposit
+  partial
+  receivable
+  refunded
+}
+
+enum PaymentMethod {
+  card_onsite
+  transfer
+  cash
+  online
+}
+
+enum RevenueBasis {
+  payment
+  consumption
+}
+
+enum RevenueSourceType {
+  payment
+  refund
+  consumption
+}
+
+enum ExpenseCategory {
+  rent
+  maintenance_fee
+  payroll
+  instructor_fee
+  advertising
+  payment_fee
+  supplies
+  facility
+  utilities
+  telecom
+  tax_accounting
+  education
+  insurance
+  tax
+  meal
+  transport
+  etc
+}
+
+enum CostType {
+  fixed
+  variable
+}
+
+enum MarketingSource {
+  naver_place
+  naver_blog
+  instagram
+  referral
+  offline
+  ad
+  etc
+}
+
+enum MemberTag {
+  no_show_risk
+  re_enroll_likely
+  long_absent
+  vip
+  trial
+  expiring
+  receivable
+}
+
+enum MatchTarget {
+  revenue
+  expense
+  transfer
+  etc
+}
+
+enum NotificationType {
+  reservation_done
+  reservation_reminder
+  reservation_canceled
+  waitlist_promoted
+  pass_expiring
+  pass_low_count
+  long_absence
+  trial_guide
+  trial_followup
+  re_enroll
+  receivable
+  review_request
+  counseling_reminder
+}
+
+enum NotificationChannel {
+  sms
+  kakao
+  push
+  email
+}
+
+enum ReconciliationStage {
+  approved
+  captured
+  deposited
+}
+
+enum BankDirection {
+  deposit
+  withdraw
+}
+
+// ── A. 테넌시 · 조직 ─────────────────────────────────────────
+model tenants {
+  id            String   @id @default(uuid())
+  name          String
+  business_no   String?
+  owner_user_id String?
+  status        String   @default("active") // active/suspended/closed
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  deleted_at    DateTime?
+}
+
+model studios {
+  id          String   @id @default(uuid())
+  tenant_id   String
+  name        String
+  timezone    String   @default("Asia/Seoul")
+  address     String?
+  phone       String?
+  status      String   @default("active")
+  policy_json Json
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  deleted_at  DateTime?
+  @@index([tenant_id])
+}
+
+model users {
+  id            String   @id @default(uuid())
+  tenant_id     String? // saas_admin 은 null
+  email         String
+  phone         String?
+  password_hash String?
+  role          Role
+  member_id     String?
+  staff_id      String?
+  status        String   @default("active") // active/invited/suspended
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  deleted_at    DateTime?
+  @@index([tenant_id])
+  @@index([email])
+}
+
+model roles {
+  id          String   @id @default(uuid())
+  code        Role
+  name_ko     String
+  description String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+}
+
+model permissions {
+  id        String   @id @default(uuid())
+  role_code Role
+  resource  String
+  action    String // read/create/update/delete/export
+  scope     String // all/assigned/own
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// ── B. 사람 · CRM ────────────────────────────────────────────
+model members {
+  id               String        @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  name             String
+  phone            String
+  gender           Gender?
+  birth_date       DateTime?     @db.Date
+  member_status    MemberStatus  @default(new_inquiry)
+  marketing_source MarketingSource?
+  goal             String?
+  medical_note     String?
+  memo             String?
+  assigned_staff_id String?
+  tags             MemberTag[]
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+  deleted_at       DateTime?
+  created_by       String?
+  @@index([tenant_id, studio_id])
+  @@index([phone])
+}
+
+model leads {
+  id                String     @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  member_id         String?
+  name              String
+  phone             String
+  lead_status       LeadStatus @default(new_inquiry)
+  marketing_source  MarketingSource?
+  inquiry_date      DateTime   @db.Date
+  trial_booked_date DateTime?  @db.Date
+  trial_done_date   DateTime?  @db.Date
+  enrolled_date     DateTime?  @db.Date
+  lost_reason       String?
+  assigned_staff_id String?
+  created_at        DateTime   @default(now())
+  updated_at        DateTime   @updatedAt
+  deleted_at        DateTime?
+  created_by        String?
+  @@index([tenant_id, studio_id])
+}
+
+model staff {
+  id                  String   @id @default(uuid())
+  tenant_id           String
+  studio_id           String
+  user_id             String?
+  name                String
+  phone               String?
+  role                Role
+  employment_type     String // fulltime/parttime/freelance
+  status              String   @default("active")
+  available_hours_json Json?
+  settlement_method   String?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  deleted_at          DateTime?
+  created_by          String?
+  @@index([tenant_id, studio_id])
+}
+
+model counseling_logs {
+  id            String   @id @default(uuid())
+  tenant_id     String
+  studio_id     String
+  lead_id       String?
+  member_id     String?
+  staff_id      String?
+  channel       String // call/visit/message/etc
+  content       String
+  consulted_at  DateTime
+  next_action_at DateTime?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  deleted_at    DateTime?
+  created_by    String?
+  @@index([tenant_id, studio_id])
+}
+
+model marketing_sources {
+  id        String          @id @default(uuid())
+  tenant_id String
+  studio_id String
+  code      MarketingSource
+  name_ko   String
+  is_paid   Boolean         @default(false)
+  is_active Boolean         @default(true)
+  created_at DateTime       @default(now())
+  updated_at DateTime       @updatedAt
+  deleted_at DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+// ── C. 수업 · 공간 · 예약 · 출석 ─────────────────────────────
+model rooms {
+  id        String   @id @default(uuid())
+  tenant_id String
+  studio_id String
+  name      String
+  capacity  Int
+  status    String   @default("active")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  deleted_at DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model class_templates {
+  id                 String    @id @default(uuid())
+  tenant_id          String
+  studio_id          String
+  class_type         ClassType
+  name               String
+  instructor_staff_id String?
+  room_id            String?
+  capacity           Int
+  duration_minutes   Int
+  recurrence_rule    String?
+  is_public          Boolean   @default(true)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+  deleted_at         DateTime?
+  created_by         String?
+  @@index([tenant_id, studio_id])
+}
+
+model class_sessions {
+  id                 String        @id @default(uuid())
+  tenant_id          String
+  studio_id          String
+  class_template_id  String?
+  class_type         ClassType
+  name               String
+  instructor_staff_id String?
+  room_id            String?
+  start_at           DateTime
+  end_at             DateTime
+  capacity           Int
+  waitlist_capacity  Int           @default(3)
+  session_status     SessionStatus @default(open)
+  is_public          Boolean       @default(true)
+  substitute_staff_id String?
+  created_at         DateTime      @default(now())
+  updated_at         DateTime      @updatedAt
+  deleted_at         DateTime?
+  created_by         String?
+  @@index([tenant_id, studio_id])
+  @@index([start_at])
+}
+
+model reservations {
+  id                  String            @id @default(uuid())
+  tenant_id           String
+  studio_id           String
+  class_session_id    String
+  member_id           String
+  pass_id             String?
+  reservation_status  ReservationStatus @default(booked)
+  booked_at           DateTime
+  canceled_at         DateTime?
+  cancel_reason       String?
+  is_self_booked      Boolean           @default(false)
+  is_late_cancel      Boolean?
+  pass_transaction_id String?
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+  deleted_at          DateTime?
+  created_by          String?
+  @@index([tenant_id, studio_id])
+  @@index([class_session_id, reservation_status])
+  @@index([member_id])
+}
+
+model waitlists {
+  id               String         @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  class_session_id String
+  member_id        String
+  pass_id          String?
+  position         Int
+  status           WaitlistStatus @default(waiting)
+  requested_at     DateTime
+  promoted_at      DateTime?
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+  deleted_at       DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([class_session_id, status])
+}
+
+model attendance {
+  id                String           @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  reservation_id    String
+  class_session_id  String
+  member_id         String
+  attendance_status AttendanceStatus
+  checked_at        DateTime
+  checked_by        String?
+  deducted          Boolean          @default(false)
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([member_id])
+}
+
+// ── D. 상품 · 수강권 · 차감 ──────────────────────────────────
+model products {
+  id                  String      @id @default(uuid())
+  tenant_id           String
+  studio_id           String
+  name                String
+  pass_kind           PassKind
+  total_count         Int?
+  valid_days          Int?
+  price_amount        BigInt
+  allowed_class_types ClassType[]
+  holdable            Boolean     @default(true)
+  max_hold_days       Int?
+  is_active           Boolean     @default(true)
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+  deleted_at          DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model passes {
+  id                String     @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  member_id         String
+  product_id        String
+  purchase_id       String?
+  pass_kind         PassKind
+  total_count       Int?
+  remaining_count   Int?
+  start_date        DateTime   @db.Date
+  expire_date       DateTime   @db.Date
+  pass_status       PassStatus @default(active)
+  paused_at         DateTime?
+  paused_days_used  Int        @default(0)
+  unit_price_amount BigInt     @default(0)
+  created_at        DateTime   @default(now())
+  updated_at        DateTime   @updatedAt
+  deleted_at        DateTime?
+  created_by        String?
+  @@index([tenant_id, studio_id])
+  @@index([member_id, pass_status])
+}
+
+model pass_transactions {
+  id             String        @id @default(uuid())
+  tenant_id      String
+  studio_id      String
+  pass_id        String
+  member_id      String
+  reason         PassTxnReason
+  delta          Int
+  balance_after  Int?
+  reservation_id String?
+  attendance_id  String?
+  memo           String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+  created_by     String?
+  @@index([tenant_id, studio_id])
+  @@index([pass_id])
+}
+
+// ── E. 결제 · 환불 · 매출 ────────────────────────────────────
+model purchases {
+  id              String   @id @default(uuid())
+  tenant_id       String
+  studio_id       String
+  member_id       String
+  product_id      String
+  pass_id         String?
+  list_amount     BigInt
+  discount_amount BigInt   @default(0)
+  final_amount    BigInt
+  purchased_at    DateTime
+  seller_staff_id String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  deleted_at      DateTime?
+  created_by      String?
+  @@index([tenant_id, studio_id])
+  @@index([member_id])
+}
+
+model payments {
+  id                 String        @id @default(uuid())
+  tenant_id          String
+  studio_id          String
+  purchase_id        String
+  member_id          String
+  payment_status     PaymentStatus
+  payment_method     PaymentMethod
+  amount             BigInt
+  paid_amount        BigInt        @default(0)
+  paid_at            DateTime?
+  card_approval_no   String?
+  depositor_name     String?
+  payment_provider   String?
+  external_payment_id String?
+  receivable_amount  BigInt        @default(0)
+  staff_id           String?
+  memo               String?
+  is_new_member      Boolean?
+  is_re_enroll       Boolean?
+  created_at         DateTime      @default(now())
+  updated_at         DateTime      @updatedAt
+  deleted_at         DateTime?
+  created_by         String?
+  @@index([tenant_id, studio_id])
+  @@index([member_id, payment_status])
+}
+
+model refunds {
+  id             String        @id @default(uuid())
+  tenant_id      String
+  studio_id      String
+  payment_id     String
+  purchase_id    String
+  member_id      String
+  refund_amount  BigInt
+  refund_reason  String?
+  refunded_at    DateTime
+  restored_count Int           @default(0)
+  status         String        @default("completed") // requested/completed/canceled
+  refund_method  PaymentMethod
+  staff_id       String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+  deleted_at     DateTime?
+  created_by     String?
+  @@index([tenant_id, studio_id])
+}
+
+model revenue_records {
+  id                  String            @id @default(uuid())
+  tenant_id           String
+  studio_id           String
+  member_id           String
+  revenue_basis       RevenueBasis
+  source_type         RevenueSourceType
+  payment_id          String?
+  pass_transaction_id String?
+  product_id          String?
+  class_type          ClassType?
+  instructor_staff_id String?
+  marketing_source    MarketingSource?
+  amount              BigInt
+  recognized_at       DateTime
+  recognized_date     DateTime          @db.Date
+  is_new_member       Boolean           @default(false)
+  is_re_enroll        Boolean           @default(false)
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+  deleted_at          DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([revenue_basis, recognized_date])
+}
+
+// ── F. 비용 · 정산 ───────────────────────────────────────────
+model expense_records {
+  id               String          @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  expense_category ExpenseCategory
+  cost_type        CostType
+  amount           BigInt
+  vendor_name      String?
+  expense_date     DateTime        @db.Date
+  source           String // bank/card/manual
+  bank_transaction_id String?
+  card_expense_id  String?
+  is_recurring     Boolean         @default(false)
+  receipt_file_url String?
+  doc_memo         String?
+  staff_id         String?
+  memo             String?
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+  deleted_at       DateTime?
+  created_by       String?
+  @@index([tenant_id, studio_id])
+  @@index([expense_date])
+}
+
+model expense_categories {
+  id                String          @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  code              ExpenseCategory
+  name_ko           String
+  default_cost_type CostType
+  is_active         Boolean         @default(true)
+  sort_order        Int             @default(0)
+  created_at        DateTime        @default(now())
+  updated_at        DateTime        @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model settlements {
+  id                String   @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  staff_id          String
+  period_start_date DateTime @db.Date
+  period_end_date   DateTime @db.Date
+  session_count     Int      @default(0)
+  base_amount       BigInt   @default(0)
+  bonus_amount      BigInt   @default(0)
+  deduction_amount  BigInt   @default(0)
+  total_amount      BigInt   @default(0)
+  status            String   @default("draft") // draft/confirmed/paid
+  confirmed_at      DateTime?
+  paid_at           DateTime?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+// ── G. 금융 연동 · 거래 매칭 ─────────────────────────────────
+model bank_accounts {
+  id                     String   @id @default(uuid())
+  tenant_id              String
+  studio_id              String
+  bank_code              String
+  account_no_masked      String
+  account_holder         String
+  balance_amount         BigInt   @default(0)
+  last_synced_at         DateTime?
+  status                 String   @default("active")
+  is_open_banking_linked Boolean  @default(false)
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+  deleted_at             DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model bank_transactions {
+  id                   String               @id @default(uuid())
+  tenant_id            String
+  studio_id            String
+  bank_account_id      String
+  txn_date             DateTime             @db.Date
+  amount               BigInt
+  direction            BankDirection
+  counterparty_name    String?
+  balance_after_amount BigInt?
+  match_target         MatchTarget?
+  matched_ref_type     String?
+  matched_ref_id       String?
+  reconciliation_stage ReconciliationStage?
+  is_matched           Boolean              @default(false)
+  import_batch_id      String?
+  created_at           DateTime             @default(now())
+  updated_at           DateTime             @updatedAt
+  deleted_at           DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([is_matched])
+}
+
+model card_sales {
+  id                   String              @id @default(uuid())
+  tenant_id            String
+  studio_id            String
+  payment_id           String?
+  approval_no          String
+  amount               BigInt
+  approved_at          DateTime
+  captured_at          DateTime?
+  deposited_at         DateTime?
+  reconciliation_stage ReconciliationStage @default(approved)
+  fee_amount           BigInt              @default(0)
+  net_deposit_amount   BigInt              @default(0)
+  bank_transaction_id  String?
+  created_at           DateTime            @default(now())
+  updated_at           DateTime            @updatedAt
+  deleted_at           DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([reconciliation_stage])
+}
+
+model card_expenses {
+  id                String       @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  card_no_masked    String
+  vendor_name       String
+  amount            BigInt
+  used_at           DateTime
+  billed_at         DateTime?    @db.Date
+  match_target      MatchTarget?
+  expense_record_id String?
+  is_matched        Boolean      @default(false)
+  import_batch_id   String?
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+  @@index([is_matched])
+}
+
+model transaction_matching_rules {
+  id               String          @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  match_field      String // counterparty_name/vendor_name
+  pattern          String
+  match_type       String // exact/contains/regex
+  target_match     MatchTarget
+  expense_category ExpenseCategory?
+  cost_type        CostType?
+  priority         Int             @default(10)
+  is_active        Boolean         @default(true)
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+  deleted_at       DateTime?
+  created_by       String?
+  @@index([tenant_id, studio_id])
+}
+
+model transaction_reconciliation_logs {
+  id           String   @id @default(uuid())
+  tenant_id    String
+  studio_id    String
+  txn_type     String // bank/card_sale/card_expense
+  txn_id       String
+  action       String // auto_matched/manual_matched/unmatched/reclassified
+  before_json  Json?
+  after_json   Json?
+  rule_id      String?
+  staff_id     String?
+  processed_at DateTime
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  @@index([tenant_id, studio_id])
+}
+
+// ── H. 알림 · 운동기록 · 강사코멘트 ──────────────────────────
+model notification_templates {
+  id                String              @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  notification_type NotificationType
+  channel           NotificationChannel
+  title             String
+  body_template     String
+  is_active         Boolean             @default(true)
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model notifications {
+  id                String              @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  member_id         String?
+  template_id       String?
+  notification_type NotificationType
+  channel           NotificationChannel
+  status            String              @default("scheduled") // scheduled/sent/failed/canceled
+  scheduled_at      DateTime?
+  sent_at           DateTime?
+  payload_json      Json?
+  error_message     String?
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model instructor_comments {
+  id               String   @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  member_id        String
+  staff_id         String
+  class_session_id String?
+  content          String
+  commented_at     DateTime
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+  deleted_at       DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model exercise_logs {
+  id               String   @id @default(uuid())
+  tenant_id        String
+  studio_id        String
+  member_id        String
+  class_session_id String
+  staff_id         String?
+  content          String
+  metrics_json     Json?
+  logged_at        DateTime
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+  deleted_at       DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+// ── I. 리포트 · 감사 · 외부연동 ──────────────────────────────
+model financial_reports {
+  id                String       @id @default(uuid())
+  tenant_id         String
+  studio_id         String
+  report_type       String // monthly_pl/cashflow/tax_export
+  revenue_basis     RevenueBasis
+  period_start_date DateTime     @db.Date
+  period_end_date   DateTime     @db.Date
+  data_json         Json
+  generated_at      DateTime
+  generated_by      String?
+  export_file_url   String?
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  deleted_at        DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model audit_logs {
+  id            String   @id @default(uuid())
+  tenant_id     String
+  studio_id     String
+  actor_user_id String?
+  actor_role    Role
+  entity_type   String
+  entity_id     String
+  action        String // create/update/delete/refund/pass_adjust/match/login/export
+  before_json   Json?
+  after_json    Json?
+  ip_address    String?
+  occurred_at   DateTime
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  @@index([tenant_id, studio_id])
+  @@index([entity_type, entity_id])
+}
+
+model external_integrations {
+  id             String   @id @default(uuid())
+  tenant_id      String
+  studio_id      String
+  provider       String // open_banking/pg/kakao_alimtalk/card_lookup/hometax
+  credential_ref String?
+  status         String   @default("disconnected") // connected/disconnected/error
+  connected_at   DateTime?
+  config_json    Json?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  deleted_at     DateTime?
+  @@index([tenant_id, studio_id])
+}
+
+model sync_logs {
+  id                      String   @id @default(uuid())
+  tenant_id               String
+  studio_id               String
+  external_integration_id String
+  sync_type               String // bank/card_sale/card_expense/notification
+  status                  String // success/partial/failed
+  started_at              DateTime
+  finished_at             DateTime?
+  record_count            Int?
+  error_message           String?
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+  @@index([tenant_id, studio_id])
+}
+
+// ── J. SaaS 과금 ─────────────────────────────────────────────
+model subscription_plans {
+  id                 String   @id @default(uuid())
+  code               String
+  name               String
+  price_amount       BigInt
+  billing_cycle      String // monthly/yearly
+  feature_limits_json Json
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  deleted_at         DateTime?
+}
+
+model tenant_subscriptions {
+  id                    String   @id @default(uuid())
+  tenant_id             String
+  subscription_plan_id  String
+  status                String   @default("trial") // trial/active/past_due/canceled/suspended
+  started_at            DateTime
+  current_period_end_at DateTime?
+  amount                BigInt   @default(0)
+  usage_json            Json?
+  next_billing_at       DateTime?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+  @@index([tenant_id])
+}

@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── 표면 토큰(라이트) ── */
+:root {
+  color-scheme: light;
+  --canvas: #f6f7fb; /* 앱 배경 */
+  --surface: #ffffff; /* 카드/패널 */
+  --surface-muted: #f1f4f9; /* 보조 표면(인풋 배경·subtle 영역) */
+  --line: #e4e8f0; /* 기본 경계선 */
+  --line-strong: #cbd3e1; /* 강조 경계선 */
+}
+
+@layer base {
+  body {
+    @apply bg-canvas font-sans text-slate-700 antialiased;
+  }
+  h1, h2, h3, h4 {
+    @apply text-slate-900;
+  }
+  /* 금액·수치는 표 정렬이 흔들리지 않도록 고정폭 숫자 */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+  /* 키보드 포커스 가시화(WCAG 2.4.7) — 마우스 클릭엔 안 뜨고 탭 이동 시 링 */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-1 ring-offset-surface;
+  }
+  /* 얇고 차분한 스크롤바 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd3e1 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #cbd3e1;
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #aab4c5;
+    background-clip: padding-box;
+  }
+  ::selection {
+    background: #cdd5ee;
+  }
+}
